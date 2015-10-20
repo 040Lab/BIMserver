@@ -18,48 +18,51 @@ package org.bimserver.plugins;
  *****************************************************************************/
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileManager;
 import javax.tools.ToolProvider;
 
 import org.bimserver.models.store.Parameter;
-import org.bimserver.plugins.web.WebModulePlugin;
 
 public class PluginContext {
 
-	private Plugin plugin;
-	private String location;
-	private boolean enabled = true;
 	private final PluginManager pluginManager;
-	private String classLocation;
-	private final PluginSourceType pluginType;
-	private JavaFileManager javaFileManager;
 	private final ClassLoader classLoader;
-	private VirtualFile virtualFile;
-	private PluginImplementation pluginImplementation;
+	private final PluginSourceType pluginType;
+	private final URI location;
+	private final Plugin plugin;
+	private final PluginImplementation pluginImplementation;
+	private final String classLocation;
+	private boolean enabled = true;
+	private JavaFileManager javaFileManager;
+	private FileSystem fileSystem;
+	private Path rootPath;
 
-	public PluginContext(PluginManager pluginManager, ClassLoader classLoader, PluginSourceType pluginType, String location) throws IOException {
+	public PluginContext(PluginManager pluginManager, ClassLoader classLoader, PluginSourceType pluginType, URI location, Plugin plugin, PluginImplementation pluginImplementation, String classLocation) throws IOException {
 		this.pluginManager = pluginManager;
 		this.classLoader = classLoader;
 		this.pluginType = pluginType;
 		this.location = location;
+		this.plugin = plugin;
+		this.pluginImplementation = pluginImplementation;
+		this.classLocation = classLocation;
 		switch (pluginType) {
 		case ECLIPSE_PROJECT:
-			virtualFile = VirtualFile.fromDirectory(new File(location));
+			fileSystem = FileSystems.getDefault();
+			rootPath = Paths.get(location);
 			break;
 		case INTERNAL:
 			break;
 		case JAR_FILE:
-			virtualFile = VirtualFile.fromJar(new File(location));
+			fileSystem = pluginManager.getOrCreateFileSystem(location);
+			rootPath = fileSystem.getPath("/");
 			break;
 		default:
 			break;
@@ -70,20 +73,12 @@ public class PluginContext {
 		return pluginType;
 	}
 
-	public void setPlugin(Plugin plugin) {
-		this.plugin = plugin;
-	}
-
 	public Plugin getPlugin() {
 		return plugin;
 	}
 
-	public String getLocation() {
+	public URI getLocation() {
 		return location;
-	}
-
-	public void setLocation(String location) {
-		this.location = location;
 	}
 
 	public void setEnabled(boolean enabled, boolean notify) {
@@ -97,33 +92,25 @@ public class PluginContext {
 		return enabled;
 	}
 
-	public InputStream getResourceAsInputStream(String name) throws FileNotFoundException {
-		InputStream resourceAsStream = classLoader.getResourceAsStream(name);
-		if (resourceAsStream == null) {
-			File file = new File(location + File.separator + name);
-			if (file.exists()) {
-				resourceAsStream = new FileInputStream(file);
-			}
-		}
-		if (resourceAsStream == null && !pluginImplementation.getRequires().isEmpty()) {
-			for (String dep : pluginImplementation.getRequires()) {
-				WebModulePlugin webModulePlugin = pluginManager.getWebModulePlugin(dep, true);
-				InputStream resourceAsInputStream = pluginManager.getPluginContext(webModulePlugin).getResourceAsInputStream(name);
-				if (resourceAsInputStream != null) {
-					return resourceAsInputStream;
-				}
-			}
-		}
-		return resourceAsStream;
-	}
-
-	public URL getResourceAsUrl(String name) {
-		return classLoader.getResource(name);
-	}
-
-	public void setClassLocation(String classLocation) {
-		this.classLocation = classLocation;
-	}
+//	public InputStream getResourceAsInputStream(String name) throws FileNotFoundException {
+//		InputStream resourceAsStream = classLoader.getResourceAsStream(name);
+//		if (resourceAsStream == null) {
+//			File file = new File(location + File.separator + name);
+//			if (file.exists()) {
+//				resourceAsStream = new FileInputStream(file);
+//			}
+//		}
+//		if (resourceAsStream == null && !pluginImplementation.getRequires().isEmpty()) {
+//			for (String dep : pluginImplementation.getRequires()) {
+//				WebModulePlugin webModulePlugin = pluginManager.getWebModulePlugin(dep, true);
+//				InputStream resourceAsInputStream = pluginManager.getPluginContext(webModulePlugin).getResourceAsInputStream(name);
+//				if (resourceAsInputStream != null) {
+//					return resourceAsInputStream;
+//				}
+//			}
+//		}
+//		return resourceAsStream;
+//	}
 
 	public String getClassLocation() {
 		return classLocation;
@@ -133,20 +120,20 @@ public class PluginContext {
 		return classLoader;
 	}
 
-	public JavaFileManager getFileManager() {
+	private JavaFileManager getFileManager() {
 		JavaCompiler systemJavaCompiler = ToolProvider.getSystemJavaCompiler();
 		if (systemJavaCompiler == null) {
 			throw new RuntimeException("JDK needed");
 		}
 		switch (pluginType) {
 		case ECLIPSE_PROJECT:
-			this.javaFileManager = new EclipseProjectPluginFileManager(systemJavaCompiler.getStandardFileManager(null, null, null), classLoader, new File(location, "bin"));
+			this.javaFileManager = new EclipseProjectPluginFileManager(systemJavaCompiler.getStandardFileManager(null, null, null), classLoader, new File(location.toString(), "bin"));
 			break;
 		case INTERNAL:
 			this.javaFileManager = systemJavaCompiler.getStandardFileManager(null, null, null);
 			break;
 		case JAR_FILE:
-			this.javaFileManager = new VirtualFileManager(systemJavaCompiler.getStandardFileManager(null, null, null), classLoader, virtualFile);
+			this.javaFileManager = new VirtualFileManager2(systemJavaCompiler.getStandardFileManager(null, null, null), classLoader, fileSystem, rootPath);
 			break;
 		default:
 			break;
@@ -154,38 +141,12 @@ public class PluginContext {
 		return javaFileManager;
 	}
 
-	public Collection<VirtualFile> listResources(String path) {
-		List<VirtualFile> urls = new ArrayList<VirtualFile>();
-		switch (pluginType) {
-		case ECLIPSE_PROJECT: {
-			VirtualFile folder = virtualFile.get(path);
-			if (folder != null) {
-				return folder.listFiles();
-			}
-			break;
-		}
-		case INTERNAL:
-			// Not supported yet
-			break;
-		case JAR_FILE: {
-			VirtualFile folder = virtualFile.get(path);
-			if (folder != null) {
-				return folder.listFiles();
-			}
-			break;
-		}
-		default:
-			break;
-		}
-		return urls;
+	public Path getRootPath() {
+		return rootPath;
 	}
 	
 	public Parameter getParameter(String name) {
 		return pluginManager.getParameter(this, name);
-	}
-
-	public void setConfig(PluginImplementation pluginImplementation) {
-		this.pluginImplementation = pluginImplementation;
 	}
 	
 	public PluginImplementation getPluginImplementation() {

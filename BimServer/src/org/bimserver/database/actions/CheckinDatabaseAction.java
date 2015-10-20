@@ -19,6 +19,7 @@ package org.bimserver.database.actions;
 
 import java.nio.ByteBuffer;
 import java.util.Date;
+import java.util.Map;
 import java.util.Set;
 
 import org.bimserver.BimServer;
@@ -32,7 +33,6 @@ import org.bimserver.database.PostCommitAction;
 import org.bimserver.database.Query;
 import org.bimserver.emf.IdEObject;
 import org.bimserver.emf.IfcModelInterface;
-import org.bimserver.interfaces.objects.SIfcHeader;
 import org.bimserver.mail.MailSystem;
 import org.bimserver.models.log.AccessMethod;
 import org.bimserver.models.log.NewRevisionAdded;
@@ -133,11 +133,10 @@ public class CheckinDatabaseAction extends GenericCheckinDatabaseAction {
 			
 			CreateRevisionResult result = createNewConcreteRevision(getDatabaseSession(), size, project, user, comment.trim());
 			concreteRevision = result.getConcreteRevision();
-			SIfcHeader ifcHeader = getModel().getModelMetaData().getIfcHeader();
+			IfcHeader ifcHeader = getModel().getModelMetaData().getIfcHeader();
 			if (ifcHeader != null) {
-				IfcHeader convertFromSObject = bimServer.getSConverter().convertFromSObject(ifcHeader, getDatabaseSession());
-				getDatabaseSession().store(convertFromSObject);
-				concreteRevision.setIfcHeader(convertFromSObject);
+				getDatabaseSession().store(ifcHeader);
+				concreteRevision.setIfcHeader(ifcHeader);
 			}
 			project.getConcreteRevisions().add(concreteRevision);
 			if (getModel() != null) {
@@ -171,6 +170,8 @@ public class CheckinDatabaseAction extends GenericCheckinDatabaseAction {
 				ifcModel = getModel();
 			}
 
+			ifcModel.fixOidsFlat(getDatabaseSession());
+
 			if (bimServer.getServerSettingsCache().getServerSettings().isGenerateGeometryOnCheckin()) {
 				setProgress("Generating Geometry...", -1);
 				new GeometryGenerator(bimServer).generateGeometry(authorization.getUoid(), bimServer.getPluginManager(), getDatabaseSession(), ifcModel, project.getId(), concreteRevision.getId(), true, geometryCache);
@@ -184,11 +185,22 @@ public class CheckinDatabaseAction extends GenericCheckinDatabaseAction {
 				concreteRevision.setClear(true);
 			}
 			Set<EClass> eClasses = ifcModel.getUsedClasses();
-			ByteBuffer buffer = ByteBuffer.allocate(10 * eClasses.size());
+			Map<EClass, Long> startOids = getDatabaseSession().getStartOids();
+			int s = 0;
 			for (EClass eClass : eClasses) {
-				buffer.putShort(getDatabaseSession().getCid(eClass));
-				buffer.putLong(getDatabaseSession().getCounter(eClass));
+				if (!DatabaseSession.perRecordVersioning(eClass)) {
+					s++;
+				}
 			}
+			ByteBuffer buffer = ByteBuffer.allocate(10 * s);
+			for (EClass eClass : eClasses) {
+				long oid = startOids.get(eClass);
+				if (!DatabaseSession.perRecordVersioning(eClass)) {
+					buffer.putShort(getDatabaseSession().getCid(eClass));
+					buffer.putLong(oid);
+				}
+			}
+			
 			concreteRevision.setOidCounters(buffer.array());
 
 			if (ifcModel != null) {

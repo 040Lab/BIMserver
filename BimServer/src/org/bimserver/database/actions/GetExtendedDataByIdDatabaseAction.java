@@ -39,11 +39,16 @@ public class GetExtendedDataByIdDatabaseAction extends GetByIdDatabaseAction<Ext
 	@Override
 	public ExtendedData execute() throws UserException, BimserverLockConflictException, BimserverDatabaseException {
 		ExtendedData extendedData = super.execute();
-		Revision revision = extendedData.getRevision();
 		if (authorization == null) {
 			throw new UserException("Authorization required for this call");
 		}
-		authorization.canReadExtendedData(revision.getOid());
+		if (extendedData.getRevision() != null) {
+			Revision revision = extendedData.getRevision();
+			authorization.canReadExtendedData(revision.getOid());
+		} else if (extendedData.getProject() != null) {
+//			Project project = extendedData.getProject();
+			// TODO check auth
+		}
 		return extendedData;
 	}
 }

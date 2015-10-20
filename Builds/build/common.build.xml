@@ -68,7 +68,6 @@
 				</path>
 			</classpath>
 		</javac>
-		<delete file="builds/bimserver/org/bimserver/servlets/websockets/jsr356/Jsr356Impl.class"></delete>
 		<copy todir="builds/bimserver/org/bimserver/database/migrations/steps">
 			<fileset file="../../BimServer/src/org/bimserver/database/migrations/steps/IFC2X3_TC1.ecore"></fileset>
 			<fileset file="../../BimServer/src/org/bimserver/database/migrations/steps/IFC4.ecore"></fileset>
@@ -254,6 +253,10 @@
 		<mkdir dir="builds/javaqueryengine/plugin"/>
 		<copy todir="builds/javaqueryengine/plugin">
 			<fileset dir="../../JavaQueryEngine/plugin"></fileset>
+		</copy>
+		<mkdir dir="builds/javaqueryengine/examples"/>
+		<copy todir="builds/javaqueryengine/examples">
+			<fileset dir="../../JavaQueryEngine/examples"></fileset>
 		</copy>
 		<jar destfile="builds/pluginlibs/bimserver-${version}-javaqueryengine.jar">
 			<fileset dir="builds/javaqueryengine"/>
@@ -443,7 +446,7 @@
 	</target>
 	<target name="SceneJS">
 		<mkdir dir="builds/scenejs" />
-		<javac destdir="builds/scenejs" debug="on" includeantruntime="false">
+		<javac destdir="builds/scenejs" debug="on" fork="true" includeantruntime="false">
 			<src path="../../SceneJS/src" />
 			<classpath>
 				<path>

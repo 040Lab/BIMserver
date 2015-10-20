@@ -46,6 +46,7 @@ import org.bimserver.interfaces.objects.SBimServerInfo;
 import org.bimserver.interfaces.objects.SDatabaseInformation;
 import org.bimserver.interfaces.objects.SJavaInfo;
 import org.bimserver.interfaces.objects.SLogAction;
+import org.bimserver.interfaces.objects.SMetrics;
 import org.bimserver.interfaces.objects.SMigration;
 import org.bimserver.interfaces.objects.SPluginDescriptor;
 import org.bimserver.interfaces.objects.SServerInfo;
@@ -156,7 +157,7 @@ public class AdminServiceImpl extends GenericServiceImpl implements AdminInterfa
 	public String getServerLog() throws ServerException, UserException {
 		requireAdminAuthenticationAndRunningServer();
 		try {
-			return FileUtils.readFileToString(new File(getBimServer().getHomeDir(), "logs/bimserver.log"));
+			return FileUtils.readFileToString(getBimServer().getHomeDir().resolve("logs/bimserver.log").toFile());
 		} catch (IOException e) {
 			LOGGER.error("", e);
 			throw new ServerException(e);
@@ -344,5 +345,10 @@ public class AdminServiceImpl extends GenericServiceImpl implements AdminInterfa
 		} finally {
 			session.close();
 		}
+	}
+
+	@Override
+	public SMetrics getMetrics() {
+		return getBimServer().getMetricsRegistry().getMetrics();
 	}
 }

@@ -117,7 +117,7 @@ public class DownloadDatabaseAction extends AbstractDownloadDatabaseAction<IfcMo
 						}
 					}
 				});
-				updateOidCounters(concreteRevision, query);
+				query.updateOidCounters(concreteRevision, getDatabaseSession());
 				getDatabaseSession().getMap(subModel, query);
 				if (serializerPluginConfiguration != null) {
 					try {
@@ -133,7 +133,7 @@ public class DownloadDatabaseAction extends AbstractDownloadDatabaseAction<IfcMo
 		IfcModelInterface ifcModel = new ServerIfcModel(lastPackageMetaData, pidRoidMap, getDatabaseSession());
 		if (ifcModelSet.size() > 1) {
 			try {
-				ifcModel = getBimServer().getMergerFactory().createMerger(getDatabaseSession(), getAuthorization().getUoid()).merge(revision.getProject(), ifcModelSet, new ModelHelper(ifcModel));
+				ifcModel = getBimServer().getMergerFactory().createMerger(getDatabaseSession(), getAuthorization().getUoid()).merge(revision.getProject(), ifcModelSet, new ModelHelper(getBimServer().getMetaDataManager(), ifcModel));
 			} catch (MergeException e) {
 				throw new UserException(e);
 			}
@@ -141,7 +141,8 @@ public class DownloadDatabaseAction extends AbstractDownloadDatabaseAction<IfcMo
 			ifcModel = ifcModelSet.iterator().next();
 		}
 		if (ifcHeader != null) {
-			ifcModel.getModelMetaData().setIfcHeader(getBimServer().getSConverter().convertToSObject(ifcHeader));
+			ifcHeader.load();
+			ifcModel.getModelMetaData().setIfcHeader(ifcHeader);
 		}
 		ifcModel.getModelMetaData().setName(project.getName() + "." + revision.getId());
 		ifcModel.getModelMetaData().setRevisionId(project.getRevisions().indexOf(revision) + 1);

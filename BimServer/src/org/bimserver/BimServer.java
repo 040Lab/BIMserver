@@ -20,6 +20,8 @@ package org.bimserver;
 import java.io.File;
 import java.io.IOException;
 import java.lang.Thread.UncaughtExceptionHandler;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Collection;
 import java.util.Date;
@@ -136,6 +138,7 @@ import org.bimserver.shared.pb.ProtocolBuffersMetaData;
 import org.bimserver.shared.reflector.FileBasedReflectorFactoryBuilder;
 import org.bimserver.shared.reflector.ReflectorFactory;
 import org.bimserver.templating.TemplateEngine;
+import org.bimserver.utils.PathUtils;
 import org.bimserver.version.VersionChecker;
 import org.bimserver.webservices.LongTransactionManager;
 import org.bimserver.webservices.PublicInterfaceFactory;
@@ -191,6 +194,7 @@ public class BimServer {
 	private MetaDataManager metaDataManager;
 	private SchemaConverterManager schemaConverterManager = new SchemaConverterManager();
 	private WebModuleManager webModuleManager;
+	private MetricsRegistry metricsRegistry;
 
 	/**
 	 * Create a new BIMserver
@@ -229,7 +233,7 @@ public class BimServer {
 
 			LOGGER.info("Starting BIMserver");
 			if (config.getHomeDir() != null) {
-				LOGGER.info("Using \"" + config.getHomeDir().getAbsolutePath() + "\" as homedir");
+				LOGGER.info("Using \"" + config.getHomeDir().toString() + "\" as homedir");
 			} else {
 				LOGGER.info("Not using a homedir");
 			}
@@ -252,7 +256,7 @@ public class BimServer {
 			serviceFactory = new PublicInterfaceFactory(this);
 			LOGGER.debug("PublicInterfaceFactory created");
 			
-			pluginManager = new PluginManager(new File(config.getHomeDir(), "tmp"), config.getClassPath(), serviceFactory, internalServicesManager, servicesMap);
+			pluginManager = new PluginManager(config.getHomeDir().resolve("tmp"), config.getClassPath(), serviceFactory, internalServicesManager, servicesMap);
 			metaDataManager = new MetaDataManager(pluginManager);
 			pluginManager.setMetaDataManager(metaDataManager);
 			LOGGER.debug("PluginManager created");
@@ -333,7 +337,7 @@ public class BimServer {
 						}
 					}
 				});
-				pluginManager.loadPlugin(ObjectIDMPlugin.class, new File(".").getAbsolutePath(), "Internal", new SchemaFieldObjectIDMPlugin(), getClass().getClassLoader(), PluginSourceType.INTERNAL, null);
+				pluginManager.loadPlugin(ObjectIDMPlugin.class, new File(".").toURI(), "Internal", new SchemaFieldObjectIDMPlugin(), getClass().getClassLoader(), PluginSourceType.INTERNAL, null);
 			} catch (Exception e) {
 				LOGGER.error("", e);
 			}
@@ -353,11 +357,13 @@ public class BimServer {
 			packages.add(Ifc4Package.eINSTANCE);
 			templateEngine = new TemplateEngine();
 			templateEngine.init(config.getResourceFetcher().getResource("templates/"));
-			File databaseDir = new File(config.getHomeDir(), "database");
+			Path databaseDir = config.getHomeDir().resolve("database");
 			BerkeleyKeyValueStore keyValueStore = new BerkeleyKeyValueStore(databaseDir);
 			
 			schemaConverterManager.registerConverter(new Ifc2x3tc1ToIfc4SchemaConverterFactory());
 			schemaConverterManager.registerConverter(new Ifc4ToIfc2x3tc1SchemaConverterFactory());
+			
+			metricsRegistry = new MetricsRegistry();
 			
 			Query.setPackageMetaDataForDefaultQuery(metaDataManager.getPackageMetaData("store"));
 			
@@ -432,7 +438,7 @@ public class BimServer {
 
 			mailSystem = new MailSystem(this);
 
-			diskCacheManager = new DiskCacheManager(this, new File(config.getHomeDir(), "cache"));
+			diskCacheManager = new DiskCacheManager(this, config.getHomeDir().resolve("cache"));
 
 			mergerFactory = new MergerFactory(this);
 
@@ -495,7 +501,7 @@ public class BimServer {
 			pluginConfiguration.setPluginDescriptor(pluginDescriptor);
 			
 			// For the opposite of setPluginDescriptor
-			session.store(pluginDescriptor);
+			//session.store(pluginDescriptor); Disabled for now, this creates massive lists, that are not really useful...
 			
 			pluginConfiguration.setDescription(plugin.getDescription());
 			pluginConfiguration.setEnabled(true);
@@ -506,8 +512,7 @@ public class BimServer {
 	}
 
 	private PluginDescriptor getPluginDescriptor(DatabaseSession session, String pluginClassName) throws BimserverDatabaseException {
-		Condition condition = new AttributeCondition(StorePackage.eINSTANCE.getPluginDescriptor_PluginClassName(), new StringLiteral(pluginClassName));
-		return session.querySingle(condition, PluginDescriptor.class, Query.getDefault());
+		return session.querySingle(StorePackage.eINSTANCE.getPluginDescriptor_PluginClassName(), pluginClassName);
 	}
 	
 	public void updateUserSettings(DatabaseSession session, User user) throws BimserverLockConflictException, BimserverDatabaseException {
@@ -739,8 +744,10 @@ public class BimServer {
 					setDefaultWebModule(pluginManager.getWebModulePlugin(bimviewsWebModule.getPluginDescriptor().getPluginClassName(), true));
 				} else {
 					WebModulePluginConfiguration defaultWebModule = findWebModule(serverSettings, "org.bimserver.defaultwebmodule.DefaultWebModulePlugin");
-					serverSettings.setWebModule(defaultWebModule);
-					setDefaultWebModule(pluginManager.getWebModulePlugin(defaultWebModule.getPluginDescriptor().getPluginClassName(), true));
+					if (defaultWebModule != null) {
+						serverSettings.setWebModule(defaultWebModule);
+						setDefaultWebModule(pluginManager.getWebModulePlugin(defaultWebModule.getPluginDescriptor().getPluginClassName(), true));
+					}
 				}
 			}
 			session.store(serverSettings);
@@ -841,7 +848,7 @@ public class BimServer {
 				pluginDescriptor.setPluginClassName(plugin.getClass().getName());
 				pluginDescriptor.setSimpleName(plugin.getClass().getSimpleName());
 				pluginDescriptor.setDescription(plugin.getDescription() + " " + plugin.getVersion());
-				pluginDescriptor.setLocation(pluginContext.getLocation());
+				pluginDescriptor.setLocation(pluginContext.getLocation().toString());
 				pluginDescriptor.setPluginInterfaceClassName(getPluginInterfaceClass(plugin).getName());
 				pluginDescriptor.setEnabled(true); // New plugins are enabled by default
 			} else if (results.size() == 1) {
@@ -850,7 +857,7 @@ public class BimServer {
 				pluginDescriptor.setPluginClassName(plugin.getClass().getName());
 				pluginDescriptor.setSimpleName(plugin.getClass().getSimpleName());
 				pluginDescriptor.setDescription(plugin.getDescription() + " " + plugin.getVersion());
-				pluginDescriptor.setLocation(pluginContext.getLocation());
+				pluginDescriptor.setLocation(pluginContext.getLocation().toString());
 				pluginDescriptor.setPluginInterfaceClassName(getPluginInterfaceClass(plugin).getName());
 				session.store(pluginDescriptor);
 				pluginManager.getPluginContext(plugin).setEnabled(pluginDescriptor.getEnabled(), false);
@@ -860,7 +867,7 @@ public class BimServer {
 		}
 	}
 
-	public File getHomeDir() {
+	public Path getHomeDir() {
 		return config.getHomeDir();
 	}
 
@@ -873,10 +880,10 @@ public class BimServer {
 	}
 	
 	private void fixLogging() throws IOException {
-		File file = new File(config.getHomeDir(), "logs/bimserver.log");
+		Path file = config.getHomeDir().resolve("logs/bimserver.log");
 		CustomFileAppender appender = new CustomFileAppender(file);
 		appender.setLayout(new PatternLayout("%d{dd-MM-yyyy HH:mm:ss} %-5p %-80m (%c.java:%L) %n"));
-		System.out.println("Logging to: " + file.getAbsolutePath());
+		System.out.println("Logging to: " + file.toString());
 		Enumeration<?> currentLoggers = LogManager.getCurrentLoggers();
 		LogManager.getRootLogger().addAppender(appender);
 		while (currentLoggers.hasMoreElements()) {
@@ -888,29 +895,29 @@ public class BimServer {
 
 	private void initHomeDir() throws IOException {
 		String[] filesToCheck = new String[] { "logs", "tmp", "log4j.xml", "templates" };
-		if (!config.getHomeDir().exists()) {
-			config.getHomeDir().mkdir();
+		if (!Files.exists(config.getHomeDir())) {
+			Files.createDirectories(config.getHomeDir());
 		}
-		if (config.getHomeDir().exists() && config.getHomeDir().isDirectory()) {
+		if (Files.exists(config.getHomeDir()) && Files.isDirectory(config.getHomeDir())) {
 			for (String fileToCheck : filesToCheck) {
-				File sourceFile = config.getResourceFetcher().getFile(fileToCheck);
-				if (sourceFile != null && sourceFile.exists()) {
-					File destFile = new File(config.getHomeDir(), fileToCheck);
-					if (!destFile.exists()) {
-						if (sourceFile.isDirectory()) {
-							destFile.mkdir();
-							for (File f : sourceFile.listFiles()) {
-								if (f.isFile()) {
-									FileUtils.copyFile(f, new File(destFile, f.getName()));
-								} else if (f.isDirectory()) {
-									File destDir2 = new File(destFile, f.getName());
-									for (File x : f.listFiles()) {
-										FileUtils.copyFile(x, new File(destDir2, x.getName()));
+				Path sourceFile = config.getResourceFetcher().getFile(fileToCheck);
+				if (sourceFile != null && Files.exists(sourceFile)) {
+					Path destFile = config.getHomeDir().resolve(fileToCheck);
+					if (!Files.exists(destFile)) {
+						if (Files.isDirectory(sourceFile)) {
+							Files.createDirectories(destFile);
+							for (Path f : PathUtils.list(sourceFile)) {
+								if (Files.isDirectory(f)) {
+									Path destDir2 = destFile.resolve(f.getFileName().toString());
+									for (Path x : PathUtils.list(f)) {
+										FileUtils.copyFile(x.toFile(), destDir2.resolve(x.getFileName().toString()).toFile());
 									}
+								} else if (Files.isDirectory(f)) {
+									FileUtils.copyFile(f.toFile(), destFile.resolve(f.getFileName().toString()).toFile());
 								}
 							}
 						} else {
-							FileUtils.copyFile(sourceFile, destFile);
+							FileUtils.copyFile(sourceFile.toFile(), destFile.toFile());
 						}
 					}
 				}
@@ -1075,5 +1082,9 @@ public class BimServer {
 	
 	public SchemaConverterManager getSchemaConverterManager() {
 		return schemaConverterManager;
+	}
+
+	public MetricsRegistry getMetricsRegistry() {
+		return metricsRegistry;
 	}
 }

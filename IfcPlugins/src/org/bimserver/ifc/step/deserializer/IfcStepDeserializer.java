@@ -45,7 +45,8 @@ import org.bimserver.emf.IfcModelInterfaceException;
 import org.bimserver.emf.MetaDataException;
 import org.bimserver.emf.Schema;
 import org.bimserver.ifc.BasicIfcModel;
-import org.bimserver.interfaces.objects.SIfcHeader;
+import org.bimserver.models.store.IfcHeader;
+import org.bimserver.models.store.StoreFactory;
 import org.bimserver.plugins.deserializers.ByteProgressReporter;
 import org.bimserver.plugins.deserializers.DeserializeException;
 import org.bimserver.plugins.deserializers.EmfDeserializer;
@@ -244,6 +245,11 @@ public abstract class IfcStepDeserializer extends EmfDeserializer {
 			}
 			break;
 		case FOOTER:
+			for (IdEObject idEObject : getModel().getValues()) {
+				if (idEObject.getOid() != -1) {
+					System.out.println(idEObject);
+				}
+			}
 			if (line.equals("ENDSEC;")) {
 				mode = Mode.DONE;
 			}
@@ -255,9 +261,9 @@ public abstract class IfcStepDeserializer extends EmfDeserializer {
 
 	private void processHeader(String line) throws DeserializeException {
 		try {
-			SIfcHeader ifcHeader = model.getModelMetaData().getIfcHeader();
+			IfcHeader ifcHeader = model.getModelMetaData().getIfcHeader();
 			if (ifcHeader == null) {
-				ifcHeader = new SIfcHeader();
+				ifcHeader = StoreFactory.eINSTANCE.createIfcHeader();
 				model.getModelMetaData().setIfcHeader(ifcHeader);
 			}
 			if (line.startsWith("FILE_DESCRIPTION")) {
@@ -470,6 +476,11 @@ public abstract class IfcStepDeserializer extends EmfDeserializer {
 					} else {
 						waitingList.add(referenceId, new ListWaitingObject(lineNumber, object, structuralFeature, index));
 					}
+				} else if (stringValue.charAt(0) == '(') {
+					// Two dimensional list
+					IdEObject newObject = (IdEObject) getPackageMetaData().create((EClass) structuralFeature.getEType());
+					readList(stringValue, newObject, newObject.eClass().getEStructuralFeature("List"));
+					list.addUnique(newObject);
 				} else {
 					Object convert = convert(structuralFeature.getEType(), stringValue);
 					if (convert != null) {

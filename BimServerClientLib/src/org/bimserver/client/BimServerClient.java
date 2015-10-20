@@ -18,12 +18,12 @@ package org.bimserver.client;
  *****************************************************************************/
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -39,7 +39,6 @@ import org.bimserver.plugins.services.BimServerClientInterface;
 import org.bimserver.plugins.services.Geometry;
 import org.bimserver.shared.AuthenticationInfo;
 import org.bimserver.shared.AutologinAuthenticationInfo;
-import org.bimserver.shared.BimServerClientFactory;
 import org.bimserver.shared.ChannelConnectionException;
 import org.bimserver.shared.ConnectDisconnectListener;
 import org.bimserver.shared.PublicInterfaceNotFoundException;
@@ -81,10 +80,10 @@ public class BimServerClient implements ConnectDisconnectListener, TokenHolder, 
 	private final String baseAddress;
 	private AuthenticationInfo authenticationInfo = new AnonymousAuthentication();
 	private String token;
-	private BimServerClientFactory factory;
+	private MetaDataManager metaDataManager;
 
-	public BimServerClient(BimServerClientFactory factory, String baseAddress, SServicesMap servicesMap, Channel channel) {
-		this.factory = factory;
+	public BimServerClient(MetaDataManager metaDataManager, String baseAddress, SServicesMap servicesMap, Channel channel) {
+		this.metaDataManager = metaDataManager;
 		this.baseAddress = baseAddress;
 		this.servicesMap = servicesMap;
 		this.channel = channel;
@@ -92,7 +91,7 @@ public class BimServerClient implements ConnectDisconnectListener, TokenHolder, 
 	}
 
 	public MetaDataManager getMetaDataManager() {
-		return factory.getMetaDataManager();
+		return metaDataManager;
 	}
 	
 	public void setAuthentication(AuthenticationInfo authenticationInfo) throws ServerException, UserException, ChannelConnectionException {
@@ -254,9 +253,9 @@ public class BimServerClient implements ConnectDisconnectListener, TokenHolder, 
 		tokenChangeListeners.add(tokenChangeListener);
 	}
 
-	public long checkin(long poid, String comment, long deserializerOid, boolean merge, boolean sync, File file) throws IOException, UserException, ServerException {
-		FileInputStream fis = new FileInputStream(file);
-		long result = checkin(poid, comment, deserializerOid, merge, sync, file.length(), file.getName(), fis);
+	public long checkin(long poid, String comment, long deserializerOid, boolean merge, boolean sync, Path file) throws IOException, UserException, ServerException {
+		FileInputStream fis = new FileInputStream(file.toFile());
+		long result = checkin(poid, comment, deserializerOid, merge, sync, file.toFile().length(), file.getFileName().toString(), fis);
 		if (sync) {
 			fis.close();
 		}
@@ -271,9 +270,12 @@ public class BimServerClient implements ConnectDisconnectListener, TokenHolder, 
 		try {
 			Long download = getBimsie1ServiceInterface().download(roid, serializerOid, true, false);
 			InputStream inputStream = getDownloadData(download, serializerOid);
-			IOUtils.copy(inputStream, outputStream);
-			inputStream.close();
-			getServiceInterface().cleanupLongAction(download);
+			try {
+				IOUtils.copy(inputStream, outputStream);
+				getServiceInterface().cleanupLongAction(download);
+			} finally {
+				inputStream.close();
+			}
 		} catch (ServerException e) {
 			LOGGER.error("", e);
 		} catch (UserException e) {
@@ -285,10 +287,13 @@ public class BimServerClient implements ConnectDisconnectListener, TokenHolder, 
 		}
 	}
 
-	public void download(long roid, long serializerOid, File file) throws IOException {
-		FileOutputStream outputStream = new FileOutputStream(file);
-		download(roid, serializerOid, outputStream);
-		outputStream.close();
+	public void download(long roid, long serializerOid, Path file) throws IOException {
+		FileOutputStream outputStream = new FileOutputStream(file.toFile());
+		try {
+			download(roid, serializerOid, outputStream);
+		} finally {
+			outputStream.close();
+		}
 	}
 
 	public InputStream getDownloadData(long downloadId, long serializerOid) throws IOException {

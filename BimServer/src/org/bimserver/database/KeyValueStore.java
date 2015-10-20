@@ -17,6 +17,7 @@ package org.bimserver.database;
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *****************************************************************************/
 
+import java.util.List;
 import java.util.Set;
 
 import org.bimserver.database.berkeley.BimserverConcurrentModificationDatabaseException;
@@ -66,13 +67,21 @@ public interface KeyValueStore {
 
 	void storeNoOverwrite(String tableName, byte[] key, byte[] value, DatabaseSession databaseSession) throws BimserverDatabaseException, BimserverLockConflictException, BimserverConcurrentModificationDatabaseException;
 
-	void incrementCommittedWrites(int committedWrites);
+	void incrementCommittedWrites(long committedWrites);
 
-	void incrementReads(int reads);
+	void incrementReads(long reads);
 
 	void storeNoOverwrite(String tableName, byte[] key, byte[] value, int offset, int length, DatabaseSession databaseSession) throws BimserverDatabaseException, BimserverLockConflictException;
 	
 	void store(String tableName, byte[] key, byte[] value, int offset, int length, DatabaseSession databaseSession) throws BimserverDatabaseException, BimserverLockConflictException;
 
 	void dumpOpenCursors();
+
+	boolean createIndexTable(String tableName, DatabaseSession databaseSession) throws BimserverDatabaseException;
+
+	void openIndexTable(String indexTableName) throws BimserverDatabaseException;
+
+	List<byte[]> getDuplicates(String tableName, byte[] keyBytes, DatabaseSession databaseSession) throws BimserverDatabaseException;
+
+	void delete(String indexTableName, byte[] featureBytesOldIndex, byte[] array, DatabaseSession databaseSession) throws BimserverLockConflictException;
 }

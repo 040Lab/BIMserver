@@ -1,29 +1,13 @@
 package org.bimserver.webservices.impl;
 
-/******************************************************************************
- * Copyright (C) 2009-2015  BIMserver.org
- * 
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * 
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *****************************************************************************/
-
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLDecoder;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -75,6 +59,7 @@ import org.bimserver.database.actions.GetAllRevisionsByUserDatabaseAction;
 import org.bimserver.database.actions.GetAllServicesOfProjectDatabaseAction;
 import org.bimserver.database.actions.GetAllUsersDatabaseAction;
 import org.bimserver.database.actions.GetAllWritableProjectsDatabaseAction;
+import org.bimserver.database.actions.GetAreaDatabaseAction;
 import org.bimserver.database.actions.GetAvailableClassesDatabaseAction;
 import org.bimserver.database.actions.GetAvailableClassesInRevisionDatabaseAction;
 import org.bimserver.database.actions.GetCheckinWarningsDatabaseAction;
@@ -87,6 +72,7 @@ import org.bimserver.database.actions.GetProjectsOfUserDatabaseAction;
 import org.bimserver.database.actions.GetRevisionSummaryDatabaseAction;
 import org.bimserver.database.actions.GetUserByUoidDatabaseAction;
 import org.bimserver.database.actions.GetUserByUserNameDatabaseAction;
+import org.bimserver.database.actions.GetVolumeDatabaseAction;
 import org.bimserver.database.actions.RemoveModelCheckerFromProjectDatabaseAction;
 import org.bimserver.database.actions.RemoveServiceFromProjectDatabaseAction;
 import org.bimserver.database.actions.RemoveUserFromExtendedDataSchemaDatabaseAction;
@@ -200,13 +186,13 @@ public class ServiceImpl extends GenericServiceImpl implements ServiceInterface 
 			}
 			username = user.getName();
 			userUsername = user.getUsername();
-			File homeDirIncoming = new File(getBimServer().getHomeDir(), "incoming");
-			if (!homeDirIncoming.isDirectory()) {
-				homeDirIncoming.mkdir();
+			Path homeDirIncoming = getBimServer().getHomeDir().resolve("incoming");
+			if (!Files.isDirectory(homeDirIncoming)) {
+				Files.createDirectory(homeDirIncoming);
 			}
-			File userDirIncoming = new File(homeDirIncoming, userUsername);
-			if (!userDirIncoming.exists()) {
-				userDirIncoming.mkdir();
+			Path userDirIncoming = homeDirIncoming.resolve(userUsername);
+			if (!Files.exists(userDirIncoming)) {
+				Files.createDirectories(userDirIncoming);
 			}
 			if (fileName.contains("/")) {
 				fileName = fileName.substring(fileName.lastIndexOf("/") + 1);
@@ -216,12 +202,13 @@ public class ServiceImpl extends GenericServiceImpl implements ServiceInterface 
 			}
 			DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss");
 			String cacheFileName = dateFormat.format(new Date()) + "-" + fileName;
-			File file = new File(userDirIncoming, cacheFileName);
-			InputStream inputStream = new MultiplexingInputStream(dataHandler.getInputStream(), new FileOutputStream(file));
+			Path file = userDirIncoming.resolve(cacheFileName);
 			DeserializerPluginConfiguration deserializerObject = session.get(StorePackage.eINSTANCE.getDeserializerPluginConfiguration(), deserializerOid, Query.getDefault());
 			if (deserializerObject == null) {
 				throw new UserException("Deserializer with oid " + deserializerOid + " not found");
 			}
+			OutputStream outputStream = Files.newOutputStream(file);
+			InputStream inputStream = new MultiplexingInputStream(dataHandler.getInputStream(), outputStream);
 			Deserializer deserializer = getBimServer().getDeserializerFactory().createDeserializer(deserializerOid);
 			deserializer.init(getBimServer().getDatabase().getMetaDataManager().getPackageMetaData(project.getSchema()));
 			
@@ -254,13 +241,13 @@ public class ServiceImpl extends GenericServiceImpl implements ServiceInterface 
 			User user = (User) session.get(StorePackage.eINSTANCE.getUser(), getAuthorization().getUoid(), Query.getDefault());
 			username = user.getName();
 			userUsername = user.getUsername();
-			File homeDirIncoming = new File(getBimServer().getHomeDir(), "incoming");
-			if (!homeDirIncoming.isDirectory()) {
-				homeDirIncoming.mkdir();
+			Path homeDirIncoming = getBimServer().getHomeDir().resolve("incoming");
+			if (!Files.isDirectory(homeDirIncoming)) {
+				Files.createDirectory(homeDirIncoming);
 			}
-			File userDirIncoming = new File(homeDirIncoming, userUsername);
-			if (!userDirIncoming.exists()) {
-				userDirIncoming.mkdir();
+			Path userDirIncoming = homeDirIncoming.resolve(userUsername);
+			if (!Files.exists(userDirIncoming)) {
+				Files.createDirectory(userDirIncoming);
 			}
 			
 			URL url = new URL(urlString);
@@ -277,12 +264,13 @@ public class ServiceImpl extends GenericServiceImpl implements ServiceInterface 
 			} else {
 				fileName = dateFormat.format(new Date()) + "-" + fileName;
 			}
-			File file = new File(userDirIncoming, fileName);
-			InputStream inputStream = new MultiplexingInputStream(input, new FileOutputStream(file));
+			Path file = userDirIncoming.resolve(fileName);
 			DeserializerPluginConfiguration deserializerObject = session.get(StorePackage.eINSTANCE.getDeserializerPluginConfiguration(), deserializerOid, Query.getDefault());
 			if (deserializerObject == null) {
 				throw new UserException("Deserializer with oid " + deserializerOid + " not found");
 			}
+			OutputStream outputStream = Files.newOutputStream(file);
+			InputStream inputStream = new MultiplexingInputStream(input, outputStream);
 			Deserializer deserializer = getBimServer().getDeserializerFactory().createDeserializer(deserializerOid);
 			deserializer.init(getBimServer().getDatabase().getMetaDataManager().getPackageMetaData("ifc2x3tc1"));
 
@@ -1525,6 +1513,34 @@ public class ServiceImpl extends GenericServiceImpl implements ServiceInterface 
 		DatabaseSession session = getBimServer().getDatabase().createSession();
 		try {
 			BimDatabaseAction<SIfcHeader> action = new GetIfcHeaderDatabaseAction(getBimServer(), session, getInternalAccessMethod(), croid, getAuthorization());
+			return session.executeAndCommitAction(action);
+		} catch (Exception e) {
+			return handleException(e);
+		} finally {
+			session.close();
+		}
+	}
+	
+	@Override
+	public Double getArea(Long roid, Long oid) throws UserException, ServerException {
+		requireAuthentication();
+		DatabaseSession session = getBimServer().getDatabase().createSession();
+		try {
+			BimDatabaseAction<Double> action = new GetAreaDatabaseAction(getBimServer(), session, getInternalAccessMethod(), roid, oid, getAuthorization());
+			return session.executeAndCommitAction(action);
+		} catch (Exception e) {
+			return handleException(e);
+		} finally {
+			session.close();
+		}
+	}
+	
+	@Override
+	public Double getVolume(Long roid, Long oid) throws UserException, ServerException {
+		requireAuthentication();
+		DatabaseSession session = getBimServer().getDatabase().createSession();
+		try {
+			BimDatabaseAction<Double> action = new GetVolumeDatabaseAction(getBimServer(), session, getInternalAccessMethod(), roid, oid, getAuthorization());
 			return session.executeAndCommitAction(action);
 		} catch (Exception e) {
 			return handleException(e);

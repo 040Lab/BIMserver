@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -16,14 +17,17 @@ import org.apache.commons.io.IOUtils;
 import org.bimserver.emf.IdEObjectImpl.State;
 import org.bimserver.models.ifc2x3tc1.Ifc2x3tc1Factory;
 import org.bimserver.models.ifc2x3tc1.IfcGloballyUniqueId;
+import org.bimserver.models.store.IfcHeader;
+import org.bimserver.models.store.StoreFactory;
+import org.bimserver.models.store.StorePackage;
 import org.bimserver.plugins.deserializers.DeserializeException;
 import org.bimserver.plugins.schema.Attribute;
 import org.bimserver.plugins.schema.EntityDefinition;
 import org.bimserver.plugins.schema.InverseAttribute;
+import org.bimserver.plugins.services.BimServerClientException;
 import org.bimserver.shared.ListWaitingObject;
 import org.bimserver.shared.SingleWaitingObject;
 import org.bimserver.shared.WaitingList;
-import org.bimserver.shared.json.StreamingJsonConverter;
 import org.eclipse.emf.common.util.AbstractEList;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -50,6 +54,9 @@ public class SharedJsonDeserializer {
 
 	@SuppressWarnings("rawtypes")
 	public IfcModelInterface read(InputStream in, IfcModelInterface model) throws DeserializeException {
+		if (model.getPackageMetaData().getSchemaDefinition() == null) {
+			throw new DeserializeException("No SchemaDefinition available");
+		}
 		WaitingList<Long> waitingList = new WaitingList<Long>();
 		final boolean log = false;
 		if (log) {
@@ -75,12 +82,12 @@ public class SharedJsonDeserializer {
 						jsonReader.beginArray();
 						while (jsonReader.hasNext()) {
 							nrObjects++;
-							processObject(model, waitingList, jsonReader);
+							processObject(model, waitingList, jsonReader, null);
 						}
 						jsonReader.endArray();
 					} else if (nextName.equals("header")) {
-						StreamingJsonConverter jsonConverter = new StreamingJsonConverter();
-						jsonConverter.fromJson(jsonReader);
+						IfcHeader ifcHeader = (IfcHeader) processObject(model, waitingList, jsonReader, StorePackage.eINSTANCE.getIfcHeader());
+						model.getModelMetaData().setIfcHeader(ifcHeader);
 					}
 					peek = jsonReader.peek();
 				}
@@ -121,28 +128,39 @@ public class SharedJsonDeserializer {
 			}
 		}
 		if (waitingList.size() > 0) {
+			try {
+				waitingList.dumpIfNotEmpty();
+			} catch (BimServerClientException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 			throw new DeserializeException("Waitinglist should be empty (" + waitingList.size() + ")");
 		}
 		return model;
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
-	private void processObject(IfcModelInterface model, WaitingList<Long> waitingList, JsonReader jsonReader) throws IOException, DeserializeException, IfcModelInterfaceException {
+	private IdEObject processObject(IfcModelInterface model, WaitingList<Long> waitingList, JsonReader jsonReader, EClass eClass) throws IOException, DeserializeException, IfcModelInterfaceException {
+		IdEObjectImpl object = null;
 		jsonReader.beginObject();
 		if (jsonReader.nextName().equals("_i")) {
 			long oid = jsonReader.nextLong();
 			if (jsonReader.nextName().equals("_t")) {
 				String type = jsonReader.nextString();
-				EClass eClass = model.getPackageMetaData().getEClassIncludingDependencies(type);
+				if (eClass == null) {
+					eClass = model.getPackageMetaData().getEClassIncludingDependencies(type);
+				}
 				if (eClass == null) {
 					throw new DeserializeException("No class found with name " + type);
 				}
-				
-				IdEObjectImpl object = null;
 				if (model.containsNoFetch(oid)) {
 					object = (IdEObjectImpl) model.getNoFetch(oid);
 				} else {
-					object = (IdEObjectImpl) model.create(eClass, oid);
+					if (eClass == StorePackage.eINSTANCE.getIfcHeader()) {
+						object = (IdEObjectImpl) StoreFactory.eINSTANCE.createIfcHeader();
+					} else {
+						object = (IdEObjectImpl) model.create(eClass, oid);
+					}
 				}
 
 				if (jsonReader.nextName().equals("_s")) {
@@ -197,44 +215,35 @@ public class SharedJsonDeserializer {
 									AbstractEList list = (AbstractEList) object.eGet(eStructuralFeature);
 									while (jsonReader.hasNext()) {
 										if (embedded) {
-											jsonReader.beginObject();
-											if (jsonReader.nextName().equals("_t")) {
-												String t = jsonReader.nextString();
-												IdEObject wrappedObject = (IdEObject) model.create(model.getPackageMetaData().getEClass(t), -1);
-												if (jsonReader.nextName().equals("_v")) {
-													EStructuralFeature wv = wrappedObject.eClass().getEStructuralFeature("wrappedValue");
-													wrappedObject.eSet(wv, readPrimitive(jsonReader, wv));
-													list.add(wrappedObject);
-												} else {
-													// error
+											JsonToken peek = jsonReader.peek();
+											if (peek == JsonToken.NUMBER) {
+												long refOid = jsonReader.nextLong();
+												processRef(model, waitingList, object, eStructuralFeature, index, list, refOid);
+											} else {
+												jsonReader.beginObject();
+												String nextName = jsonReader.nextName();
+												if (nextName.equals("_t")) {
+													String t = jsonReader.nextString();
+													IdEObject wrappedObject = (IdEObject) model.create(model.getPackageMetaData().getEClass(t), -1);
+													if (jsonReader.nextName().equals("_v")) {
+														EStructuralFeature wv = wrappedObject.eClass().getEStructuralFeature("wrappedValue");
+														wrappedObject.eSet(wv, readPrimitive(jsonReader, wv));
+														list.add(wrappedObject);
+													} else {
+														// error
+													}
+												} else if (nextName.equals("_i")) {
+													// Not all are embedded...
+													long refOid = jsonReader.nextLong();
+													processRef(model, waitingList, object, eStructuralFeature, index, list, refOid);
 												}
+												jsonReader.endObject();
 											}
-											jsonReader.endObject();
 										} else {
 											long refOid = jsonReader.nextLong();
-											EntityDefinition entityBN = model.getPackageMetaData().getSchemaDefinition().getEntityBN(object.eClass().getName());
-											Attribute attributeBN = entityBN.getAttributeBNWithSuper(eStructuralFeature.getName());
-											if (skipInverses && attributeBN instanceof InverseAttribute && ((EReference)eStructuralFeature).getEOpposite() != null) {
-												// skip
-											} else {
-												if (model.contains(refOid)) {
-													EObject referencedObject = model.get(refOid);
-													if (referencedObject != null) {
-														EClass referenceEClass = referencedObject.eClass();
-														if (((EClass) eStructuralFeature.getEType()).isSuperTypeOf(referenceEClass)) {
-															while (list.size() <= index) {
-																list.addUnique(referencedObject);
-															}
-														} else {
-															throw new DeserializeException(-1, referenceEClass.getName() + " cannot be stored in " + eStructuralFeature.getName());
-														}
-													}
-												} else {
-													waitingList.add(refOid, new ListWaitingObject(-1, object, eStructuralFeature, index));
-												}
-											}
-											index++;
+											processRef(model, waitingList, object, eStructuralFeature, index, list, refOid);
 										}
+										index++;
 									}
 								}
 								jsonReader.endArray();
@@ -243,7 +252,9 @@ public class SharedJsonDeserializer {
 									Object x = readPrimitive(jsonReader, eStructuralFeature);
 									if (eStructuralFeature.getEType() == EcorePackage.eINSTANCE.getEDouble()) {
 										EStructuralFeature asStringFeature = object.eClass().getEStructuralFeature(eStructuralFeature.getName() + "AsString");
-										object.eSet(asStringFeature, "" + x); // TODO
+										if (asStringFeature != null) {
+											object.eSet(asStringFeature, "" + x); // TODO
+										}
 										// this
 										// is
 										// losing
@@ -305,6 +316,7 @@ public class SharedJsonDeserializer {
 					if (waitingList.containsKey(oid)) {
 						waitingList.updateNode(oid, eClass, object);
 					}
+					model.add(object.getOid(), object);
 				} else {
 					LOGGER.info("_s expected");
 				}
@@ -315,6 +327,34 @@ public class SharedJsonDeserializer {
 			LOGGER.info("_i expected");
 		}
 		jsonReader.endObject();
+		return object;
+	}
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private void processRef(IfcModelInterface model, WaitingList<Long> waitingList, IdEObjectImpl object,
+			EStructuralFeature eStructuralFeature, int index, AbstractEList list, long refOid)
+					throws DeserializeException {
+		EntityDefinition entityBN = model.getPackageMetaData().getSchemaDefinition().getEntityBN(object.eClass().getName());
+		Attribute attributeBN = entityBN.getAttributeBNWithSuper(eStructuralFeature.getName());
+		if (skipInverses && attributeBN instanceof InverseAttribute && ((EReference)eStructuralFeature).getEOpposite() != null) {
+			// skip
+		} else {
+			if (model.contains(refOid)) {
+				EObject referencedObject = model.get(refOid);
+				if (referencedObject != null) {
+					EClass referenceEClass = referencedObject.eClass();
+					if (((EClass) eStructuralFeature.getEType()).isSuperTypeOf(referenceEClass)) {
+						while (list.size() <= index) {
+							list.addUnique(referencedObject);
+						}
+					} else {
+						throw new DeserializeException(-1, referenceEClass.getName() + " cannot be stored in " + eStructuralFeature.getName());
+					}
+				}
+			} else {
+				waitingList.add(refOid, new ListWaitingObject(-1, object, eStructuralFeature, index));
+			}
+		}
 	}
 	
 
@@ -332,6 +372,9 @@ public class SharedJsonDeserializer {
 			return jsonReader.nextInt();
 		} else if (eClassifier == EcorePackage.eINSTANCE.getEByteArray()) {
 			return Base64.decodeBase64(jsonReader.nextString());
+		} else if (eClassifier == EcorePackage.eINSTANCE.getEDate()) {
+			long timestamp = jsonReader.nextLong();
+			return new Date(timestamp);
 		} else if (eClassifier == EcorePackage.eINSTANCE.getEFloat()) {
 			return (float)jsonReader.nextDouble();
 		} else if (eClassifier == EcorePackage.eINSTANCE.getEEnum()) {

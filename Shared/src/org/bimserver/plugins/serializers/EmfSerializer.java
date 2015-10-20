@@ -18,12 +18,12 @@ package org.bimserver.plugins.serializers;
  *****************************************************************************/
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.bimserver.emf.IdEObject;
 import org.bimserver.emf.IdEObjectImpl;
@@ -124,14 +124,17 @@ public abstract class EmfSerializer implements Serializer, StreamingReader {
 		while (result) {
 			result = write(outputStream, progressReporter);
 		}
-		progressReporter.update(1, 1);
+		if(progressReporter!=null) progressReporter.update(1, 1);
 	}
 
-	public void writeToFile(File file, ProgressReporter progressReporter) throws SerializerException {
+	public void writeToFile(Path file, ProgressReporter progressReporter) throws SerializerException {
 		try {
-			FileOutputStream fos = new FileOutputStream(file);
-			writeToOutputStream(fos, progressReporter);
-			fos.close();
+			OutputStream outputStream = Files.newOutputStream(file);
+			try {
+				writeToOutputStream(outputStream, progressReporter);
+			} finally {
+				outputStream.close();
+			}
 		} catch (FileNotFoundException e) {
 			LOGGER.error("", e);
 		} catch (IOException e) {

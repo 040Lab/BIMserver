@@ -18,9 +18,14 @@ package org.bimserver.database.berkeley;
  *****************************************************************************/
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +40,7 @@ import org.bimserver.database.KeyValueStore;
 import org.bimserver.database.Record;
 import org.bimserver.database.RecordIterator;
 import org.bimserver.database.SearchingRecordIterator;
+import org.bimserver.utils.PathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,8 +64,8 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(BerkeleyKeyValueStore.class);
 	private Environment environment;
-	private int committedWrites;
-	private int reads;
+	private long committedWrites;
+	private long reads;
 	private final Map<String, Database> tables = new HashMap<String, Database>();
 	private boolean isNew;
 	private TransactionConfig transactionConfig;
@@ -70,22 +76,27 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 	private final AtomicLong cursorCounter = new AtomicLong();
 	private final Map<Long, StackTraceElement[]> openCursors = new ConcurrentHashMap<>();
 
-	public BerkeleyKeyValueStore(File dataDir) throws DatabaseInitException {
-		if (dataDir.isDirectory()) {
-			if (dataDir.listFiles().length > 0) {
-				LOGGER.info("Non-empty database directory found \"" + dataDir.getAbsolutePath() + "\"");
-				isNew = false;
-			} else {
-				LOGGER.info("Empty database directory found \"" + dataDir.getAbsolutePath() + "\"");
-				isNew = true;
+	public BerkeleyKeyValueStore(Path dataDir) throws DatabaseInitException {
+		if (Files.isDirectory(dataDir)) {
+			try {
+				if (PathUtils.list(dataDir).size() > 0) {
+					LOGGER.info("Non-empty database directory found \"" + dataDir.toString() + "\"");
+					isNew = false;
+				} else {
+					LOGGER.info("Empty database directory found \"" + dataDir.toString() + "\"");
+					isNew = true;
+				}
+			} catch (IOException e) {
+				LOGGER.error("", e);
 			}
 		} else {
 			isNew = true;
-			LOGGER.info("No database directory found, creating \"" + dataDir.getAbsolutePath() + "\"");
-			if (dataDir.mkdir()) {
-				LOGGER.info("Successfully created database dir \"" + dataDir.getAbsolutePath() + "\"");
-			} else {
-				LOGGER.error("Error creating database dir \"" + dataDir.getAbsolutePath() + "\"");
+			LOGGER.info("No database directory found, creating \"" + dataDir.toString() + "\"");
+			try {
+				Files.createDirectory(dataDir);
+				LOGGER.info("Successfully created database dir \"" + dataDir.toString() + "\"");
+			} catch (Exception e) {
+				LOGGER.error("Error creating database dir \"" + dataDir.toString() + "\"");
 			}
 		}
 		EnvironmentConfig envConfig = new EnvironmentConfig();
@@ -97,10 +108,10 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		envConfig.setConfigParam(EnvironmentConfig.CHECKPOINTER_HIGH_PRIORITY, "true");
 		envConfig.setConfigParam(EnvironmentConfig.CLEANER_THREADS, "5");
 		try {
-			environment = new Environment(dataDir, envConfig);
+			environment = new Environment(dataDir.toFile(), envConfig);
 		} catch (EnvironmentLockedException e) {
 			String message = "Environment locked exception. Another process is using the same database, or the current user has no write access (database location: \""
-					+ dataDir.getAbsolutePath() + "\")";
+					+ dataDir.toString() + "\")";
 			throw new DatabaseInitException(message);
 		} catch (DatabaseException e) {
 			String message = "A database initialisation error has occured (" + e.getMessage() + ")";
@@ -145,6 +156,24 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		return true;
 	}
 
+	public boolean createIndexTable(String tableName, DatabaseSession databaseSession) throws BimserverDatabaseException {
+		if (tables.containsKey(tableName)) {
+			throw new BimserverDatabaseException("Table " + tableName + " already created");
+		}
+		DatabaseConfig databaseConfig = new DatabaseConfig();
+		databaseConfig.setAllowCreate(true);
+		databaseConfig.setDeferredWrite(false);
+		databaseConfig.setTransactional(true);
+		databaseConfig.setSortedDuplicates(true);
+		Database database = environment.openDatabase(null, tableName, databaseConfig);
+		if (database == null) {
+			return false;
+		}
+		tables.put(tableName, database);
+		
+		return true;
+	}
+	
 	public boolean openTable(String tableName) throws BimserverDatabaseException {
 		if (tables.containsKey(tableName)) {
 			throw new BimserverDatabaseException("Table " + tableName + " already opened");
@@ -160,6 +189,22 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		}
 		tables.put(tableName, database);
 		return true;
+	}
+
+	public void openIndexTable(String tableName) throws BimserverDatabaseException {
+		if (tables.containsKey(tableName)) {
+			throw new BimserverDatabaseException("Table " + tableName + " already opened");
+		}
+		DatabaseConfig databaseConfig = new DatabaseConfig();
+		databaseConfig.setAllowCreate(false);
+		databaseConfig.setDeferredWrite(false);
+		databaseConfig.setTransactional(true);
+		databaseConfig.setSortedDuplicates(true);
+		Database database = environment.openDatabase(null, tableName, databaseConfig);
+		if (database == null) {
+			throw new BimserverDatabaseException("Table " + tableName + " not found in database");
+		}
+		tables.put(tableName, database);
 	}
 	
 	private Database getDatabase(String tableName) throws BimserverDatabaseException {
@@ -209,7 +254,30 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		return null;
 	}
 
-	public int getTotalWrites() {
+	@Override
+	public List<byte[]> getDuplicates(String tableName, byte[] keyBytes, DatabaseSession databaseSession) throws BimserverDatabaseException {
+		DatabaseEntry key = new DatabaseEntry(keyBytes);
+		DatabaseEntry value = new DatabaseEntry();
+		try {
+			Cursor cursor = getDatabase(tableName).openCursor(getTransaction(databaseSession), cursorConfig);
+			try {
+				OperationStatus operationStatus = cursor.getSearchKey(key, value, LockMode.DEFAULT);
+				List<byte[]> result = new ArrayList<byte[]>();
+				while (operationStatus == OperationStatus.SUCCESS) {
+					result.add(value.getData());
+					operationStatus = cursor.getNextDup(key, value, LockMode.DEFAULT);
+				}
+				return result;
+			} finally {
+				cursor.close();
+			}
+		} catch (DatabaseException e) {
+			LOGGER.error("", e);
+		}
+		return null;
+	}
+
+	public long getTotalWrites() {
 		return committedWrites;
 	}
 
@@ -303,6 +371,30 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		DatabaseEntry entry = new DatabaseEntry(key);
 		try {
 			getDatabase(tableName).delete(getTransaction(databaseSession), entry);
+		} catch (LockConflictException e) {
+			throw new BimserverLockConflictException(e);
+		} catch (DatabaseException e) {
+			LOGGER.error("", e);
+		} catch (UnsupportedOperationException e) {
+			LOGGER.error("", e);
+		} catch (IllegalArgumentException e) {
+			LOGGER.error("", e);
+		} catch (BimserverDatabaseException e) {
+			LOGGER.error("", e);
+		}
+	}
+	
+	@Override
+	public void delete(String indexTableName, byte[] featureBytesOldIndex, byte[] array, DatabaseSession databaseSession) throws BimserverLockConflictException {
+		try {
+			Cursor cursor = getDatabase(indexTableName).openCursor(getTransaction(databaseSession), cursorConfig);
+			try {
+				if (cursor.getSearchBoth(new DatabaseEntry(featureBytesOldIndex), new DatabaseEntry(array), LockMode.DEFAULT) == OperationStatus.SUCCESS) {
+					cursor.delete();
+				}
+			} finally {
+				cursor.close();
+			}
 		} catch (LockConflictException e) {
 			throw new BimserverLockConflictException(e);
 		} catch (DatabaseException e) {
@@ -420,7 +512,7 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 		return new HashSet<String>(environment.getDatabaseNames());
 	}
 	
-	public synchronized void incrementReads(int reads) {
+	public synchronized void incrementReads(long reads) {
 		this.reads += reads;
 		if (this.reads / 100000 != lastPrintedReads) {
 			LOGGER.info("reads: " + this.reads);
@@ -429,7 +521,7 @@ public class BerkeleyKeyValueStore implements KeyValueStore {
 	}
 	
 	@Override
-	public synchronized void incrementCommittedWrites(int committedWrites) {
+	public synchronized void incrementCommittedWrites(long committedWrites) {
 		this.committedWrites += committedWrites;
 		if (this.committedWrites / 100000 != lastPrintedCommittedWrites) {
 			LOGGER.info("writes: " + this.committedWrites);

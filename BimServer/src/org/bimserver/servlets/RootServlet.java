@@ -60,6 +60,18 @@ public class RootServlet extends HttpServlet {
 	@Override
 	protected void service(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
 		try {
+			String requestOrigin = request.getHeader("Origin");
+			if (requestOrigin != null && !bimServer.getServerSettingsCache().isHostAllowed(requestOrigin)) {
+				response.setStatus(403);
+				return;
+			}
+			if (requestOrigin != null) {
+				response.setHeader("Access-Control-Allow-Origin", requestOrigin);
+			} else {
+				response.setHeader("Access-Control-Allow-Origin", "*");
+			}
+			response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
 			String requestUri = request.getRequestURI();
 			String servletContextPath = getServletContext().getContextPath();
 			if (requestUri.startsWith(servletContextPath)) {
@@ -72,7 +84,7 @@ public class RootServlet extends HttpServlet {
 //				LOGGER.info(requestUri);
 			}
 			setContentType(response, requestUri);
-			if (request.getRequestURI().endsWith("getbimserveraddress")) {
+			if (request.getRequestURI().endsWith(".getbimserveraddress")) {
 				response.setContentType("application/json; charset=utf-8");
 				String siteAddress = bimServer.getServerSettingsCache().getServerSettings().getSiteAddress();
 				if (siteAddress == null || siteAddress.trim().isEmpty()) {

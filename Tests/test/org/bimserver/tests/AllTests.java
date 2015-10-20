@@ -2,15 +2,14 @@ package org.bimserver.tests;
 
 import static org.junit.Assert.fail;
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-import org.apache.commons.io.FileUtils;
 import org.bimserver.BimServer;
 import org.bimserver.BimServerConfig;
 import org.bimserver.LocalDevPluginLoader;
-import org.bimserver.client.DirectBimServerClientFactory;
-import org.bimserver.client.json.JsonBimServerClientFactory;
 import org.bimserver.plugins.services.BimServerClientInterface;
 import org.bimserver.shared.BimServerClientFactory;
 import org.bimserver.shared.LocalDevelopmentResourceFetcher;
@@ -36,6 +35,7 @@ import org.bimserver.tests.lowlevel.UnsetReferenceWithOpposite;
 import org.bimserver.tests.serviceinterface.MultiCheckinAndDownload;
 import org.bimserver.tests.serviceinterface.SingleCheckinAndDownload;
 import org.bimserver.tests.serviceinterface.UpdateProject;
+import org.bimserver.utils.PathUtils;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.runner.RunWith;
@@ -77,12 +77,12 @@ public class AllTests {
 
 	private static void setup() {
 		// Create a config
-		File home = new File("home");
+		Path home = Paths.get("home");
 		
 		// Remove the home dir if it's there
-		if (home.exists()) {
+		if (Files.exists(home)) {
 			try {
-				FileUtils.deleteDirectory(home);
+				PathUtils.removeDirectoryWithContent(home);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -92,13 +92,13 @@ public class AllTests {
 		config.setHomeDir(home);
 		config.setStartEmbeddedWebServer(true);
 		config.setPort(8080);
-		config.setResourceFetcher(new LocalDevelopmentResourceFetcher(new File("../")));
+		config.setResourceFetcher(new LocalDevelopmentResourceFetcher(Paths.get("../")));
 		config.setClassPath(System.getProperty("java.class.path"));
 		
 		bimServer = new BimServer(config);
 		try {
 			// CHANGE THESE TO MATCH YOUR CONFIGURATION
-			File[] pluginDirectories = new File[]{new File("E:\\Git\\BIMserverMaster2")};
+			Path[] pluginDirectories = new Path[]{Paths.get("C:\\Git\\BIMserver")};
 			
 			// Load plugins
 			LocalDevPluginLoader.loadPlugins(bimServer.getPluginManager(), pluginDirectories);
@@ -114,6 +114,7 @@ public class AllTests {
 			
 			client.disconnect();
 		} catch (Exception e) {
+			e.printStackTrace();
 			fail(e.getMessage());
 		}
 	}
