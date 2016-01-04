@@ -20,13 +20,15 @@ package org.bimserver.changes;
 import java.util.List;
 import java.util.Map;
 
-import org.bimserver.database.BimserverDatabaseException;
+import org.bimserver.BimserverDatabaseException;
 import org.bimserver.database.BimserverLockConflictException;
 import org.bimserver.database.DatabaseSession;
-import org.bimserver.database.Query;
+import org.bimserver.database.OldQuery;
 import org.bimserver.emf.IdEObject;
 import org.bimserver.emf.IfcModelInterface;
 import org.bimserver.emf.PackageMetaData;
+import org.bimserver.models.ifc2x3tc1.IfcBoolean;
+import org.bimserver.models.ifc2x3tc1.Tristate;
 import org.bimserver.models.store.ConcreteRevision;
 import org.bimserver.models.store.Project;
 import org.bimserver.shared.exceptions.UserException;
@@ -55,7 +57,7 @@ public class SetWrappedAttributeChange implements Change {
 	public void execute(IfcModelInterface model, Project project, ConcreteRevision concreteRevision, DatabaseSession databaseSession, Map<Long, IdEObject> created, Map<Long, IdEObject> deleted) throws UserException, BimserverLockConflictException,
 			BimserverDatabaseException {
 		PackageMetaData packageMetaData = databaseSession.getMetaDataManager().getPackageMetaData(project.getSchema());
-		IdEObject idEObject = databaseSession.get(model, oid, new Query(packageMetaData, project.getId(), concreteRevision.getId(), -1));
+		IdEObject idEObject = databaseSession.get(model, oid, new OldQuery(packageMetaData, project.getId(), concreteRevision.getId(), -1));
 		EClass eClass = databaseSession.getEClassForOid(oid);
 		if (idEObject == null) {
 			idEObject = created.get(oid);
@@ -94,6 +96,13 @@ public class SetWrappedAttributeChange implements Change {
 					throw new UserException("Not a wrapped type");
 				}
 				EObject wrappedObject = databaseSession.create(typeEClass);
+				if (wrappedObject instanceof IfcBoolean) {
+					if ((Boolean)value == true) {
+						value = Tristate.TRUE;
+					} else {
+						value = Tristate.FALSE;
+					}
+				}
 				wrappedObject.eSet(wrappedObject.eClass().getEStructuralFeature("wrappedValue"), value);
 				idEObject.eSet(eReference, wrappedObject);
 			}
